@@ -1,0 +1,130 @@
+# Z-Push (Fork chrism3277-rgb/Z-Push, Branch opendesk) fuer openDesk
+# Erreichbar unter https://webmail.in.appel-elektrotechnik.de/Microsoft-Server-ActiveSync
+# Enthaelt keine Zugangsdaten: Z-Push reicht die Logins der Geraete an IMAP/SMTP/DAV durch.
+# Ist das GHCR-Paket privat, wird zusaetzlich ein imagePullSecret benoetigt.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zpush
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zpush-state
+  namespace: zpush
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: opendesk-rbd
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zpush
+  namespace: zpush
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: zpush
+  template:
+    metadata:
+      labels:
+        app: zpush
+    spec:
+      hostAliases:
+      - ip: 192.168.101.241
+        hostnames:
+        - dav.in.appel-elektrotechnik.de
+      containers:
+      - name: zpush
+        image: ghcr.io/chrism3277-rgb/z-push:opendesk
+        env:
+        - name: ZPUSH_DAV_SERVER
+          value: dav.in.appel-elektrotechnik.de
+        - name: ZPUSH_LOGLEVEL
+          value: INFO
+        ports:
+        - containerPort: 80
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+        volumeMounts:
+        - name: state
+          mountPath: /var/lib/z-push
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: zpush-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zpush
+  namespace: zpush
+spec:
+  selector:
+    app: zpush
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zpush
+  namespace: opendesk
+spec:
+  type: ExternalName
+  externalName: zpush.zpush.svc.cluster.local
+  ports:
+  - port: 80
+    name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zpush
+  namespace: opendesk
+  annotations:
+    haproxy-ingress.github.io/timeout-server: 1000s
+    haproxy-ingress.github.io/timeout-client: 1000s
+    haproxy-ingress.github.io/proxy-body-size: 50M
+spec:
+  ingressClassName: haproxy
+  tls:
+  - hosts:
+    - webmail.in.appel-elektrotechnik.de
+    secretName: opendesk-certificates-tls
+  rules:
+  - host: webmail.in.appel-elektrotechnik.de
+    http:
+      paths:
+      - path: /Microsoft-Server-ActiveSync
+        pathType: Prefix
+        backend:
+          service:
+            name: zpush
+            port:
+              number: 80
