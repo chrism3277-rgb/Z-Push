@@ -42,6 +42,8 @@ define('CALDAV_PORT', '443');
 define('CALDAV_PATH', '/caldav.php/%u/');
 
 // Default CalDAV folder (calendar folder/principal). This will be marked as the default calendar in the mobile
+// 'AUTO': detect it per user via schedule-default-calendar-URL (RFC 6638) and only offer the components
+// (events/tasks) a collection supports - for servers with per-user collection ids, e.g. OX App Suite
 define('CALDAV_PERSONAL', 'PRINCIPAL');
 
 // If the CalDAV server supports the sync-collection operation

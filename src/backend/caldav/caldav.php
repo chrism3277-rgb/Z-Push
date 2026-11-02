@@ -35,6 +35,11 @@ class BackendCalDAV extends BackendDiff {
     private $_caldav;
     private $_caldav_path;
     private $_collection = array();
+    // CALDAV_PERSONAL = 'AUTO': discovered default calendar/task list and components per collection
+    private $_discovered = false;
+    private $_personal = null;
+    private $_taskdefault = null;
+    private $_components = array();
 
     private $changessinkinit;
     private $sinkdata;
@@ -125,18 +130,92 @@ class BackendCalDAV extends BackendDiff {
     public function GetFolderList() {
         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->GetFolderList(): Getting all folders."));
         $folders = array();
+        $this->_discover();
         $calendars = $this->_caldav->FindCalendars();
         foreach ($calendars as $val) {
             $fpath = explode("/", $val->url, -1);
             if (is_array($fpath)) {
                 $folderid = array_pop($fpath);
-                $id = "C" . $folderid;
-                $folders[] = $this->StatFolder($id);
-                $id = "T" . $folderid;
-                $folders[] = $this->StatFolder($id);
+                // only offer the components a collection supports (if known)
+                $comps = isset($this->_components[$folderid]) ? $this->_components[$folderid] : null;
+                if ($comps === null || in_array("VEVENT", $comps)) {
+                    $folders[] = $this->StatFolder("C" . $folderid);
+                }
+                if ($comps === null || in_array("VTODO", $comps)) {
+                    $folders[] = $this->StatFolder("T" . $folderid);
+                }
             }
         }
         return $folders;
+    }
+
+    /**
+     * With CALDAV_PERSONAL = 'AUTO' the default calendar is taken from
+     * schedule-default-calendar-URL (RFC 6638) and the supported components
+     * of each collection from supported-calendar-component-set.
+     * Needed for servers with per-user collection ids (e.g. OX App Suite).
+     */
+    private function _discover() {
+        if ($this->_discovered || !defined('CALDAV_PERSONAL') || CALDAV_PERSONAL !== 'AUTO') {
+            return;
+        }
+        $this->_discovered = true;
+        $ns = 'urn:ietf:params:xml:ns:caldav';
+        try {
+            $xml = $this->_caldav->DoPROPFINDRequest($this->_caldav_path, array($ns . ':supported-calendar-component-set'), 1);
+            $dom = new DOMDocument();
+            if ($xml && @$dom->loadXML($xml)) {
+                foreach ($dom->getElementsByTagNameNS('DAV:', 'response') as $resp) {
+                    $href = $resp->getElementsByTagNameNS('DAV:', 'href')->item(0);
+                    if (!$href) continue;
+                    $id = basename(rtrim(rawurldecode(trim($href->nodeValue)), '/'));
+                    $comps = array();
+                    foreach ($resp->getElementsByTagNameNS($ns, 'comp') as $c) {
+                        $comps[] = strtoupper($c->getAttribute('name'));
+                    }
+                    if (count($comps) > 0) {
+                        $this->_components[$id] = $comps;
+                        if ($this->_taskdefault === null && in_array('VTODO', $comps)) {
+                            $this->_taskdefault = $id;
+                        }
+                    }
+                }
+            }
+            $xml = $this->_caldav->DoPROPFINDRequest($this->_caldav_path . 'schedule-inbox/', array($ns . ':schedule-default-calendar-URL'), 0);
+            $dom = new DOMDocument();
+            if ($xml && @$dom->loadXML($xml)) {
+                foreach ($dom->getElementsByTagNameNS($ns, 'schedule-default-calendar-URL') as $d) {
+                    $href = $d->getElementsByTagNameNS('DAV:', 'href')->item(0);
+                    if ($href) {
+                        $this->_personal = basename(rtrim(rawurldecode(trim($href->nodeValue)), '/'));
+                    }
+                }
+            }
+        }
+        catch (Exception $e) {
+            ZLog::Write(LOGLEVEL_WARN, sprintf("BackendCalDAV->_discover(): %s", $e->getMessage()));
+        }
+        if ($this->_personal === null) {
+            foreach ($this->_components as $id => $comps) {
+                if (in_array('VEVENT', $comps)) { $this->_personal = $id; break; }
+            }
+        }
+        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendCalDAV->_discover(): default calendar '%s', default task list '%s', %d collections",
+            $this->_personal, $this->_taskdefault, count($this->_components)));
+    }
+
+    private function _getPersonal() {
+        if (!defined('CALDAV_PERSONAL')) return null;
+        if (CALDAV_PERSONAL !== 'AUTO') return CALDAV_PERSONAL;
+        $this->_discover();
+        return $this->_personal;
+    }
+
+    private function _getTaskDefault() {
+        if (!defined('CALDAV_PERSONAL')) return null;
+        if (CALDAV_PERSONAL !== 'AUTO') return CALDAV_PERSONAL;
+        $this->_discover();
+        return $this->_taskdefault;
     }
 
     /**
@@ -151,7 +230,7 @@ class BackendCalDAV extends BackendDiff {
         $folder->displayname = $val->displayname;
         $folder->serverid = $id;
         if ($id[0] == "C") {
-            if (defined('CALDAV_PERSONAL') && strcasecmp(substr($id, 1), CALDAV_PERSONAL) == 0) {
+            if ($this->_getPersonal() !== null && strcasecmp(substr($id, 1), $this->_getPersonal()) == 0) {
                 $folder->type = SYNC_FOLDER_TYPE_APPOINTMENT;
             }
             else {
@@ -159,7 +238,7 @@ class BackendCalDAV extends BackendDiff {
             }
         }
         else {
-            if (defined('CALDAV_PERSONAL') && strcasecmp(substr($id, 1), CALDAV_PERSONAL) == 0) {
+            if ($this->_getTaskDefault() !== null && strcasecmp(substr($id, 1), $this->_getTaskDefault()) == 0) {
                 $folder->type = SYNC_FOLDER_TYPE_TASK;
             }
             else {
@@ -399,7 +478,7 @@ class BackendCalDAV extends BackendDiff {
      */
     public function CreateUpdateCalendar($data, $url = false, $etag = "*") {
         if ($url === false) {
-            $url = sprintf("%s%s/%s-%s.ics", $this->_caldav_path, CALDAV_PERSONAL, gmdate("Ymd\THis\Z"), hash("md5", microtime()));
+            $url = sprintf("%s%s/%s-%s.ics", $this->_caldav_path, $this->_getPersonal(), gmdate("Ymd\THis\Z"), hash("md5", microtime()));
             $etag = "*";
         }
 
@@ -453,7 +532,7 @@ class BackendCalDAV extends BackendDiff {
      * @return boolean
      */
     public function DeleteCalendar($id) {
-        $http_status_code = $this->_caldav->DoDELETERequest(sprintf("%s%s/%s", $this->_caldav_path, CALDAV_PERSONAL, $id));
+        $http_status_code = $this->_caldav->DoDELETERequest(sprintf("%s%s/%s", $this->_caldav_path, $this->_getPersonal(), $id));
         return $http_status_code == "204";
     }
 
@@ -467,7 +546,7 @@ class BackendCalDAV extends BackendDiff {
     public function FindCalendar($uid) {
         $filter = sprintf("<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VEVENT\"><C:prop-filter name=\"UID\"><C:text-match>%s</C:text-match></C:prop-filter></C:comp-filter></C:comp-filter></C:filter>", $uid);
 
-        $events = $this->_caldav->DoCalendarQuery($filter, sprintf("%s%s", $this->_caldav_path, CALDAV_PERSONAL));
+        $events = $this->_caldav->DoCalendarQuery($filter, sprintf("%s%s", $this->_caldav_path, $this->_getPersonal()));
 
         return $events;
     }
