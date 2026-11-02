@@ -1332,6 +1332,12 @@ class BackendCardDAV extends BackendDiff implements ISearchProvider {
                 }
                 ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCardDAV::discoverAddressbooks() Found addressbook '%s'", urldecode($response->url)));
                 $this->addressbooks[] = urldecode($response->url);
+                // CARDDAV_DEFAULT_PATH = 'AUTO': choose the default address book by display name
+                if (CARDDAV_DEFAULT_PATH === 'AUTO' && defined('CARDDAV_DEFAULT_NAMES')
+                        && in_array(mb_strtolower(trim((string)$response->display_name)), array_map('mb_strtolower', explode('|', CARDDAV_DEFAULT_NAMES)))) {
+                    $this->default_url = urldecode($response->url);
+                    ZLog::Write(LOGLEVEL_INFO, sprintf("BackendCardDAV::discoverAddressbooks() default address book '%s'", $this->default_url));
+                }
             }
             unset($xml);
         }

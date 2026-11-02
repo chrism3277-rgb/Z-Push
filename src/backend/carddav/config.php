@@ -57,6 +57,11 @@ define('CARDDAV_PATH', '/caldav.php/%u/');
 //   Add the trailing /
 define('CARDDAV_DEFAULT_PATH', '/caldav.php/%u/addresses/');
 
+// With CARDDAV_DEFAULT_PATH = 'AUTO' the address book whose display name matches one of these
+// names (separated by |, case insensitive) receives new contacts - for servers with per-user
+// address book ids (e.g. OX App Suite). Otherwise new contacts go to the first address book found.
+define('CARDDAV_DEFAULT_NAMES', 'Contacts|Kontakte');
+
 // Server path to the GAL addressbook. This addressbook is readonly and searchable by the user, but it will NOT be synced.
 // If you don't want GAL, comment it
 // %l: replaced with the local part of the username
