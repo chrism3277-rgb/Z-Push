@@ -406,7 +406,38 @@ class BackendCalDAV extends BackendDiff {
             ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendCalDAV->CreateUpdateCalendar(): server refused '%s' with HTTP %d: %s", $url, $code, substr($detail, 0, 300)));
             throw new StatusException(sprintf("BackendCalDAV->CreateUpdateCalendar(): HTTP %d", $code), SYNC_STATUS_SERVERERROR);
         }
+        // Some servers (e.g. OX App Suite) return no ETag on PUT and an empty HEAD response.
+        // Without the ETag the item is stored in the sync state without 'mod' and is
+        // exported back to the device as a new item (duplicate on the device).
+        if ($etag_new === null || $etag_new === '') {
+            $etag_new = $this->_fetchEtag($url);
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->CreateUpdateCalendar(): ETag via PROPFIND '%s'", $etag_new));
+        }
         return $etag_new;
+    }
+
+    /**
+     * Returns the ETag of a single calendar object via PROPFIND (depth 0) or null if it does not exist
+     *
+     * @param string $url
+     * @return string|null
+     */
+    private function _fetchEtag($url) {
+        $xml = $this->_caldav->DoPROPFINDRequest($url, array('getetag'), 0);
+        $code = $this->_caldav->GetHttpResponseCode();
+        if ($code != 207 && $code != 200) {
+            return null;
+        }
+        $dom = new DOMDocument();
+        if ($xml && @$dom->loadXML($xml)) {
+            foreach ($dom->getElementsByTagNameNS('DAV:', 'getetag') as $e) {
+                $v = trim($e->nodeValue);
+                if ($v !== '') {
+                    return preg_replace('/^"?([^"]+)"?$/', '$1', $v);
+                }
+            }
+        }
+        return null;
     }
 
     /**
