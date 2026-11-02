@@ -270,13 +270,18 @@ class BackendCalDAV extends BackendDiff {
         }
         else {
             $path = $this->_caldav_path . substr($folderid, 1) . "/";
-            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->StatMessage Data doesn't exist for this item, querying caldav server for uid '%s' in folder '%s'", substr($id, 0, strlen($id)-4), $path));
-            $e = $this->_caldav->GetEntryByUid(substr($id, 0, strlen($id)-4), $path, $type);
-            if ($e == null && count($e) <= 0) {
-                ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->StatMessage No item on server with uid '%s' in folder '%s'", substr($id, 0, strlen($id)-4), $path));
+            // Query the ETag of the object URL directly. The calendar-query with a UID
+            // prop-filter used before is ignored by some servers (e.g. OX App Suite returns
+            // all objects of the collection); taking the first result then compared the
+            // ETag of an unrelated event -> false conflict, change from the device dropped.
+            // It also relied on UID == resource name, which is not guaranteed.
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->StatMessage Data doesn't exist for this item, querying etag of '%s%s'", $path, $id));
+            $etag = $this->_fetchEtag($path . $id);
+            if ($etag === null || $etag === '') {
+                ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->StatMessage No item on server '%s%s'", $path, $id));
                 return;
             }
-            $data = $e[0];
+            $data = array('href' => $id, 'etag' => $etag);
         }
         $message = array();
         $message['id'] = $data['href'];
