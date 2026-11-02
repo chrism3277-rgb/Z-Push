@@ -35,6 +35,7 @@ class BackendCalDAV extends BackendDiff {
     private $_caldav;
     private $_caldav_path;
     private $_collection = array();
+    private $_sharedLogin = false;
     // CALDAV_PERSONAL = 'AUTO': discovered default calendar/task list and components per collection
     private $_discovered = false;
     private $_personal = null;
@@ -63,6 +64,13 @@ class BackendCalDAV extends BackendDiff {
      * @see IBackend::Logon()
      */
     public function Logon($username, $domain, $password) {
+        // Shared mailbox login of the form user@mailbox@domain (e.g. openDesk/Dovecot master
+        // user style): only mail is available, skip DAV and offer no folders
+        if (defined('DAV_SKIP_SHARED_MAILBOX_LOGIN') && DAV_SKIP_SHARED_MAILBOX_LOGIN && substr_count($username, '@') >= 2) {
+            $this->_sharedLogin = true;
+            ZLog::Write(LOGLEVEL_INFO, sprintf("%s->Logon(): shared mailbox login '%s', skipping DAV", get_class($this), $username));
+            return true;
+        }
         $encodedusername = Utils::urlEncodePathSegment($username);
         $encodedlocalpartfromemail = Utils::urlEncodePathSegment(Utils::GetLocalPartFromEmail($username));
         $this->_caldav_path = str_replace('%u', $encodedusername, str_replace('%l', $encodedlocalpartfromemail, CALDAV_PATH));
@@ -130,6 +138,9 @@ class BackendCalDAV extends BackendDiff {
     public function GetFolderList() {
         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->GetFolderList(): Getting all folders."));
         $folders = array();
+        if ($this->_sharedLogin) {
+            return $folders;
+        }
         $this->_discover();
         $calendars = $this->_caldav->FindCalendars();
         foreach ($calendars as $val) {

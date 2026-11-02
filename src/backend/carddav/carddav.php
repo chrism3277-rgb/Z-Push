@@ -36,6 +36,7 @@ class BackendCardDAV extends BackendDiff implements ISearchProvider {
      */
     private $server = null;
     private $default_url = null;
+    private $_sharedLogin = false;
     private $gal_url = null;
 
     // Android only supports synchronizing 1 AddressBook per account, this is the foldername for Z-Push
@@ -77,6 +78,13 @@ class BackendCardDAV extends BackendDiff implements ISearchProvider {
      * @return boolean
      */
     public function Logon($username, $domain, $password) {
+        // Shared mailbox login of the form user@mailbox@domain (e.g. openDesk/Dovecot master
+        // user style): only mail is available, skip DAV and offer no folders
+        if (defined('DAV_SKIP_SHARED_MAILBOX_LOGIN') && DAV_SKIP_SHARED_MAILBOX_LOGIN && substr_count($username, '@') >= 2) {
+            $this->_sharedLogin = true;
+            ZLog::Write(LOGLEVEL_INFO, sprintf("%s->Logon(): shared mailbox login '%s', skipping DAV", get_class($this), $username));
+            return true;
+        }
         $encodedusername = Utils::urlEncodePathSegment($username);
         $encodedlocalpartfromemail = Utils::urlEncodePathSegment(Utils::GetLocalPartFromEmail($username));
         $this->url = CARDDAV_PROTOCOL . '://' . CARDDAV_SERVER . ':' . CARDDAV_PORT . str_replace("%d", $domain, str_replace("%u", $encodedusername, str_replace("%l", $encodedlocalpartfromemail, CARDDAV_PATH)));
@@ -318,6 +326,9 @@ class BackendCardDAV extends BackendDiff implements ISearchProvider {
      */
     public function GetFolderList() {
         ZLog::Write(LOGLEVEL_DEBUG, 'BackendCardDAV::GetFolderList()');
+        if ($this->_sharedLogin) {
+            return array();
+        }
 
         // The mobile will only see one
         $addressbooks = array();
@@ -773,6 +784,9 @@ class BackendCardDAV extends BackendDiff implements ISearchProvider {
 
         $items['range'] = $rangestart . '-' . $rangeend;
         $items['searchtotal'] = 0;
+        if ($this->_sharedLogin || $this->gal_url === false) {
+            return $items;
+        }
 
         // Don't search if the length is < 5, we are typing yet
         if ($this->gal_url !== false && $this->server !== false && strlen($searchquery) >= CARDDAV_GAL_MIN_LENGTH) {

@@ -427,3 +427,8 @@
  *                      certificates on localhost)
  */
 define('DAV_SSL_VERIFY', DAV_SSL_VERIFY_AUTO);
+
+// Logins of the form user@mailbox@domain (shared/functional mailboxes, e.g. openDesk)
+// only authenticate against IMAP. If true, the CalDAV/CardDAV backends accept such logins
+// without connecting and offer no folders, so BackendCombined can log on with mail only.
+define('DAV_SKIP_SHARED_MAILBOX_LOGIN', false);
