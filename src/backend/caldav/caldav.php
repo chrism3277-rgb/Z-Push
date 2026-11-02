@@ -2059,6 +2059,14 @@ class BackendCalDAV extends BackendDiff {
      * @return string
      */
     public static function tzidFromMSTZ($mstz, $eventstart){
+        // Some devices (Android Mail) send a completely empty timezone (UTC without rules).
+        // The times are UTC instants then; store them in the server timezone (config TIMEZONE)
+        // instead of picking the first zone with offset 0 (Africa/Abidjan).
+        $raw = base64_decode($mstz);
+        if ($raw !== false && strlen($raw) >= 172 && trim($raw, "\0") === '') {
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->tzidFromMSTZ(): empty timezone, using '%s'", date_default_timezone_get()));
+            return date_default_timezone_get();
+        }
         // 1. Check known MS time zones
         $mstz_parts = unpack("lbias/Z64tzname/vdstendyear/vdstendmonth/vdstendday/vdstendweek/vdstendhour/"
                                     ."vdstendminute/vdstendsecond/vdstendmillis/lstdbias/Z64tznamedst/vdststartyear/"
