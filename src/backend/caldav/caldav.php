@@ -1251,6 +1251,14 @@ class BackendCalDAV extends BackendDiff {
                     if (isset($data->attendees) && !isset($exception->attendees)) {
                         $exception->attendees = $data->attendees;
                     }
+                    // all components of a recurring event must have the same ORGANIZER
+                    // (RFC 6638 same-organizer-in-all-components)
+                    if (isset($data->organizeremail)) {
+                        $exception->organizeremail = $data->organizeremail;
+                        if (isset($data->organizername)) {
+                            $exception->organizername = $data->organizername;
+                        }
+                    }
 
                     $exceptionVEvent = $this->_ParseASEventToVEvent($exception, $id, $tzid, $tzpar);
 
