@@ -368,6 +368,12 @@ class CalDAVClient {
 		  $this->SetMatch( ($etag != '*'), $etag );
 		}
 		$this->DoRequest($url, "PUT", $icalendar, 'text/calendar; charset="utf-8"');
+		// keep status and body of the PUT, the HEAD request below would overwrite them
+		$put_code = $this->httpResponseCode;
+		$put_xml = $this->xmlResponse;
+		if ($put_code >= 400) {
+			return null;
+		}
 
 		$etag = null;
 		if ( preg_match( '{^ETag:\s+"([^"]*)"\s*$}im', $this->httpResponseHeaders, $matches ) ) {
@@ -385,6 +391,8 @@ class CalDAVClient {
 			}
 			$this->httpResponseHeaders = $save_response_headers;
 		}
+		$this->httpResponseCode = $put_code;
+		$this->xmlResponse = $put_xml;
 		return $etag;
 	}
 
@@ -397,6 +405,20 @@ class CalDAVClient {
 	 *
 	 * @return int The HTTP Result Code for the DELETE
 	 */
+	/**
+	 * HTTP status code of the last request
+	 */
+	function GetHttpResponseCode() {
+		return $this->httpResponseCode;
+	}
+
+	/**
+	 * XML body of the last request that returned XML
+	 */
+	function GetXmlResponse() {
+		return isset($this->xmlResponse) ? $this->xmlResponse : '';
+	}
+
 	function DoDELETERequest( $url, $etag = null ) {
 		if ( $etag != null ) {
 			$this->SetMatch( true, $etag );

@@ -398,7 +398,15 @@ class BackendCalDAV extends BackendDiff {
             $etag = "*";
         }
 
-        return $this->_caldav->DoPUTRequest($url, $data, $etag);
+        $etag_new = $this->_caldav->DoPUTRequest($url, $data, $etag);
+        // do not silently drop items the server refused
+        $code = $this->_caldav->GetHttpResponseCode();
+        if ($code >= 400) {
+            $detail = trim(preg_replace('/\s+/', ' ', strip_tags((string)$this->_caldav->GetXmlResponse())));
+            ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendCalDAV->CreateUpdateCalendar(): server refused '%s' with HTTP %d: %s", $url, $code, substr($detail, 0, 300)));
+            throw new StatusException(sprintf("BackendCalDAV->CreateUpdateCalendar(): HTTP %d", $code), SYNC_STATUS_SERVERERROR);
+        }
+        return $etag_new;
     }
 
     /**
