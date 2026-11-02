@@ -37,9 +37,22 @@ Konfiguration über Umgebungsvariablen (siehe `entrypoint.sh`):
 | `ZPUSH_SMTP_SERVER` | `postfix-ox.opendesk.svc.cluster.local` |
 | `ZPUSH_TIMEZONE` | `Europe/Berlin` |
 | `ZPUSH_LOGLEVEL` | `INFO` |
+| `ZPUSH_IMAP_OPTIONS` | `/tls-sslv23/novalidate-cert/norsh` (STARTTLS zu Dovecot) |
 | `ZPUSH_SHARED_MAILBOX_LOGIN` | `true` |
 
 Kubernetes-Beispiel: `opendesk/k8s/zpush.yaml`. Der Pod löst `dav.<DOMAIN>` per `hostAliases` direkt auf den Ingress auf.
+
+## Bekannte Grenzen
+
+- **Dauerhaft abgelehnte Termine:** Lehnt der CalDAV-Server einen Termin ab (z. B. fehlende Schreibrechte
+  auf einen öffentlichen Kalender), bekommt das Gerät Status 5 (Serverfehler) und versucht es bei jedem Sync
+  erneut, bis der Termin auf dem Gerät gelöscht oder korrigiert wird. Der Grund steht im Log
+  (`server refused ... with HTTP ...`). Das ist gewollt: Vorher ging der Termin ohne Meldung verloren.
+- **Funktionspostfächer:** Jedes Funktionspostfach braucht auf dem Gerät ein eigenes Konto
+  (Benutzer `<login>@<funktionsadresse>`). Kalender und Kontakte gibt es dort nicht.
+- **Globales Adressbuch (GAL):** Nicht angebunden. Die Empfängersuche auf dem Gerät findet nur eigene Kontakte.
+- **Tests:** Z-Push hat keine Unit-Tests (nur Psalm). Die Fixes wurden gegen OX App Suite und Android Mail
+  geprüft. Die Testfälle stehen reproduzierbar in [TESTFAELLE.md](TESTFAELLE.md).
 
 ## Lizenz
 

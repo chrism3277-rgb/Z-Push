@@ -7,7 +7,9 @@ set -euo pipefail
 : "${ZPUSH_LOGLEVEL:=INFO}"
 : "${ZPUSH_IMAP_SERVER:=dovecot.opendesk.svc.cluster.local}"
 : "${ZPUSH_IMAP_PORT:=143}"
-: "${ZPUSH_IMAP_OPTIONS:=/notls/norsh}"
+# STARTTLS; "tls-sslv23" statt "tls", weil c-client mit "/tls" nur TLS 1.0 spricht (Dovecot verlangt >= 1.2)
+# novalidate-cert: Dovecot ist nur cluster-intern erreichbar, sein Zertifikat passt nicht zum Service-Namen
+: "${ZPUSH_IMAP_OPTIONS:=/tls-sslv23/novalidate-cert/norsh}"
 : "${ZPUSH_SMTP_SERVER:=postfix-ox.opendesk.svc.cluster.local}"
 : "${ZPUSH_SMTP_PORT:=25}"
 : "${ZPUSH_DAV_PORT:=443}"
