@@ -172,8 +172,10 @@ class BackendCalDAV extends BackendDiff {
         }
         $this->_discovered = true;
         $ns = 'urn:ietf:params:xml:ns:caldav';
+        $writable = array();
         try {
-            $xml = $this->_caldav->DoPROPFINDRequest($this->_caldav_path, array($ns . ':supported-calendar-component-set'), 1);
+            // components and privileges of all collections in the calendar home
+            $xml = $this->_caldav->DoPROPFINDRequest($this->_caldav_path, array($ns . ':supported-calendar-component-set', 'current-user-privilege-set'), 1);
             $dom = new DOMDocument();
             if ($xml && @$dom->loadXML($xml)) {
                 foreach ($dom->getElementsByTagNameNS('DAV:', 'response') as $resp) {
@@ -184,35 +186,73 @@ class BackendCalDAV extends BackendDiff {
                     foreach ($resp->getElementsByTagNameNS($ns, 'comp') as $c) {
                         $comps[] = strtoupper($c->getAttribute('name'));
                     }
-                    if (count($comps) > 0) {
-                        $this->_components[$id] = $comps;
-                        if ($this->_taskdefault === null && in_array('VTODO', $comps)) {
-                            $this->_taskdefault = $id;
-                        }
-                    }
+                    if (count($comps) == 0) continue;
+                    $this->_components[$id] = $comps;
+                    // without a privilege set the collection counts as writable
+                    $privset = $resp->getElementsByTagNameNS('DAV:', 'current-user-privilege-set')->item(0);
+                    $writable[$id] = ($privset === null)
+                        || $privset->getElementsByTagNameNS('DAV:', 'write')->length > 0
+                        || $privset->getElementsByTagNameNS('DAV:', 'write-content')->length > 0
+                        || $privset->getElementsByTagNameNS('DAV:', 'all')->length > 0;
                 }
             }
-            $xml = $this->_caldav->DoPROPFINDRequest($this->_caldav_path . 'schedule-inbox/', array($ns . ':schedule-default-calendar-URL'), 0);
-            $dom = new DOMDocument();
-            if ($xml && @$dom->loadXML($xml)) {
-                foreach ($dom->getElementsByTagNameNS($ns, 'schedule-default-calendar-URL') as $d) {
-                    $href = $d->getElementsByTagNameNS('DAV:', 'href')->item(0);
-                    if ($href) {
-                        $this->_personal = basename(rtrim(rawurldecode(trim($href->nodeValue)), '/'));
-                    }
-                }
+
+            // RFC 6638: current-user-principal -> schedule-inbox-URL -> schedule-default-calendar-URL
+            $inbox = null;
+            $principal = $this->_getHref($this->_caldav_path, 'current-user-principal');
+            if ($principal !== null) {
+                $inbox = $this->_getHref($principal, $ns . ':schedule-inbox-URL');
+            }
+            if ($inbox === null) {
+                $inbox = $this->_caldav_path . 'schedule-inbox/';
+            }
+            $default = $this->_getHref(rtrim($inbox, '/') . '/', $ns . ':schedule-default-calendar-URL');
+            if ($default !== null) {
+                $this->_personal = basename(rtrim($default, '/'));
             }
         }
         catch (Exception $e) {
             ZLog::Write(LOGLEVEL_WARN, sprintf("BackendCalDAV->_discover(): %s", $e->getMessage()));
         }
-        if ($this->_personal === null) {
-            foreach ($this->_components as $id => $comps) {
-                if (in_array('VEVENT', $comps)) { $this->_personal = $id; break; }
+        // fallbacks: first writable collection of the matching component type
+        foreach ($this->_components as $id => $comps) {
+            if ($this->_personal === null && in_array('VEVENT', $comps) && $writable[$id]) {
+                $this->_personal = $id;
+            }
+            if ($this->_taskdefault === null && in_array('VTODO', $comps) && $writable[$id]) {
+                $this->_taskdefault = $id;
             }
         }
         ZLog::Write(LOGLEVEL_INFO, sprintf("BackendCalDAV->_discover(): default calendar '%s', default task list '%s', %d collections",
             $this->_personal, $this->_taskdefault, count($this->_components)));
+    }
+
+    /**
+     * Returns the first DAV:href inside the given property of $url (PROPFIND depth 0) or null
+     *
+     * @param string $url
+     * @param string $prop     property name, namespace-qualified as in DoPROPFINDRequest()
+     * @return string|null
+     */
+    private function _getHref($url, $prop) {
+        $xml = $this->_caldav->DoPROPFINDRequest($url, array($prop), 0);
+        $code = $this->_caldav->GetHttpResponseCode();
+        if ($code != 207 && $code != 200) {
+            return null;
+        }
+        $pos = strrpos($prop, ':');
+        $nsuri = ($pos === false) ? 'DAV:' : substr($prop, 0, $pos);
+        $local = ($pos === false) ? $prop : substr($prop, $pos + 1);
+        $dom = new DOMDocument();
+        if ($xml && @$dom->loadXML($xml)) {
+            foreach ($dom->getElementsByTagNameNS($nsuri, $local) as $p) {
+                $href = $p->getElementsByTagNameNS('DAV:', 'href')->item(0);
+                if ($href && trim($href->nodeValue) !== '') {
+                    return rawurldecode(trim($href->nodeValue));
+                }
+            }
+        }
+        return null;
     }
 
     private function _getPersonal() {
