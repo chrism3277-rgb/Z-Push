@@ -350,10 +350,6 @@ class BackendCalDAV extends BackendDiff {
      */
     public function StatMessage($folderid, $id) {
         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->StatMessage('%s','%s')", $folderid,  $id));
-        $type = "VEVENT";
-        if ($folderid[0] == "T") {
-            $type = "VTODO";
-        }
         $data = null;
         if (array_key_exists($id, $this->_collection)) {
             $data = $this->_collection[$id];
