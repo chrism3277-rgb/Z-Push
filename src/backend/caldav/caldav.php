@@ -1960,7 +1960,10 @@ class BackendCalDAV extends BackendDiff {
                     $dstTime = $trans[2];
                     $stdTime = $trans[1];
                 }
-                $stdTimeO = new DateTime($stdTime['time']);
+                // TIME_ZONE_INFORMATION expects the transition in local time (before the
+                // transition), not in UTC. Otherwise devices cannot match the zone and
+                // store the events in UTC (wrong times after DST changes).
+                $stdTimeO = new DateTime(gmdate('Y-m-d\TH:i:s', $stdTime['ts'] + $dstTime['offset']), timezone_open("UTC"));
                 $stdFirst = new DateTime(sprintf("first sun of %s %s", $stdTimeO->format('F'), $stdTimeO->format('Y')), timezone_open("UTC"));
                 $stdBias = $stdTime['offset'] / -60;
                 $stdName = $stdTime['abbr'];
@@ -1974,7 +1977,7 @@ class BackendCalDAV extends BackendDiff {
                 if ($stdTimeO->format('n') != $stdMonth) {
                     $stdWeek = 5;
                 }
-                $dstTimeO = new DateTime($dstTime['time']);
+                $dstTimeO = new DateTime(gmdate('Y-m-d\TH:i:s', $dstTime['ts'] + $stdTime['offset']), timezone_open("UTC"));
                 $dstFirst = new DateTime(sprintf("first sun of %s %s", $dstTimeO->format('F'), $dstTimeO->format('Y')), timezone_open("UTC"));
                 $dstName = $dstTime['abbr'];
                 $dstYear = 0;
