@@ -6,6 +6,8 @@ Fork von [Z-Hub/Z-Push](https://github.com/Z-Hub/Z-Push) 2.7.7 als ActiveSync-Ga
 - **Kalender, Aufgaben, Kontakte:** CalDAV/CardDAV gegen OX App Suite (`dav.<DOMAIN>`)
 - **Funktionspostfächer:** Login `benutzer@funktionsadresse` → nur Mail
 
+**Einrichtung, Betrieb und Weiterentwicklung: [ANLEITUNG.md](ANLEITUNG.md)**
+
 ## Änderungen gegenüber 2.7.7
 
 Jede Änderung ist ein eigener Commit auf dem Branch `opendesk`. Gefunden wurden sie im Betrieb mit OX App Suite (openDesk 1.19) und Android Mail.
