@@ -344,7 +344,11 @@
     // Delivery receipt requests
     define('KOE_CAPABILITY_RECEIPTS', true);
     // Impersonate other users
-    define('KOE_CAPABILITY_IMPERSONATE', true);
+    // Disabled: impersonation (login of the form "user#target") is only permission-checked via
+    // Backend->Setup(), which is a no-op in diff-based backends (IMAP/CalDAV/CardDAV/combined),
+    // so it would let any authenticated user act as any other. KOE impersonation is a Kopano-only
+    // feature and unused with the combined backend. Leave false unless a backend enforces the ACL.
+    define('KOE_CAPABILITY_IMPERSONATE', false);
 
     // To synchronize the GAB KOE, the GAB store and folderid need to be specified.
     // Use the gab-sync script to generate this data. The name needs to
