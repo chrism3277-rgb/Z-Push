@@ -46,6 +46,19 @@ class Webservice {
             ZLog::Write(LOGLEVEL_INFO, sprintf("Webservice::HandleWebservice('%s'): user '%s' executing action for user '%s'", $commandCode, Request::GetAuthUser(), $user));
         }
 
+        // Webservice commands act on the account named in the "User" GET parameter, which is not
+        // bound to the authenticated user. The only intended authorization check is
+        // Backend->Setup($user, true) below, but diff-based backends (IMAP, CalDAV, CardDAV and
+        // the combined backend) inherit BackendDiff::Setup(), which returns true for every store
+        // except "SYSTEM". Without this gate any authenticated mailbox user could list, wipe and
+        // remove another user's devices. These backends have no HTTP admin role (admin tasks run
+        // through the z-push-admin CLI), so the webservice is restricted to the caller's own
+        // account. A backend that implements a genuine admin ACL in Setup() would relax this.
+        if (strcasecmp((string) $user, (string) Request::GetAuthUser()) !== 0) {
+            ZLog::Write(LOGLEVEL_WARN, sprintf("Webservice::HandleWebservice('%s'): user '%s' denied - may only act on its own account, requested '%s'", $commandCode, Request::GetAuthUser(), $user));
+            throw new AuthenticationRequiredException(sprintf("Not enough privileges of '%s' to act for user '%s': Permission denied", Request::GetAuthUser(), $user));
+        }
+
         // initialize non-wsdl soap server
         $this->server = new SoapServer(null, array('uri' => "http://z-push.org/webservice"));
 

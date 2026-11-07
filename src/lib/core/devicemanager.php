@@ -81,7 +81,25 @@ class DeviceManager {
 
         // only continue if deviceid is set
         if ($this->devid) {
-            $this->device = new ASDevice($this->devid, Request::GetDeviceType(), Request::GetGETUser(), Request::GetUserAgent());
+            // The device must be bound to the authenticated user, not to the client-supplied
+            // "User" GET parameter (Request::GetGETUser()), which is unfiltered and never
+            // verified against the login. Trusting it would let an authenticated user create or
+            // overwrite device/state bookkeeping for a victim (CWE-639). Derive the device user
+            // from the authenticated identity, normalized exactly like getUser (strtolower, plus
+            // local-part when USE_FULLEMAIL_FOR_LOGIN is off) so the stored value is unchanged for
+            // legitimate requests, where getUser already equals the authenticated user.
+            $deviceUser = Request::GetAuthUser();
+            if ($deviceUser === false) {
+                // pre-authentication path (e.g. provisioning check): no verified identity yet
+                $deviceUser = Request::GetGETUser();
+            }
+            else {
+                $deviceUser = strtolower((string) $deviceUser);
+                if (defined('USE_FULLEMAIL_FOR_LOGIN') && ! USE_FULLEMAIL_FOR_LOGIN) {
+                    $deviceUser = Utils::GetLocalPartFromEmail($deviceUser);
+                }
+            }
+            $this->device = new ASDevice($this->devid, Request::GetDeviceType(), $deviceUser, Request::GetUserAgent());
             $this->loadDeviceData();
 
             ZPush::GetTopCollector()->SetUserAgent($this->device->GetDeviceUserAgent());
