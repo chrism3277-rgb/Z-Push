@@ -7,9 +7,19 @@ set -euo pipefail
 : "${ZPUSH_LOGLEVEL:=INFO}"
 : "${ZPUSH_IMAP_SERVER:=dovecot.opendesk.svc.cluster.local}"
 : "${ZPUSH_IMAP_PORT:=143}"
+# Zertifikate von Dovecot und postfix pruefen? Standard "false": beide sind nur cluster-intern erreichbar und
+# ihr Zertifikat passt nicht zum Service-Namen. Mit "true" muessen ZPUSH_IMAP_SERVER und ZPUSH_SMTP_SERVER
+# Namen sein, die im Zertifikat stehen (siehe ANLEITUNG.md, Abschnitt "Zertifikate pruefen").
+: "${ZPUSH_TLS_VERIFY:=false}"
+# Optional: eigene CA (PEM-Datei, z. B. aus einem Secret eingehaengt), wird dem System-Truststore hinzugefuegt
+: "${ZPUSH_CA_FILE:=}"
+case "$ZPUSH_TLS_VERIFY" in
+  true)  IMAP_CERT_OPT="";                 SMTP_VERIFY="true";  SMTP_SELF_SIGNED="false" ;;
+  false) IMAP_CERT_OPT="/novalidate-cert"; SMTP_VERIFY="false"; SMTP_SELF_SIGNED="true" ;;
+  *) echo "ZPUSH_TLS_VERIFY muss true oder false sein" >&2; exit 1 ;;
+esac
 # STARTTLS; "tls-sslv23" statt "tls", weil c-client mit "/tls" nur TLS 1.0 spricht (Dovecot verlangt >= 1.2)
-# novalidate-cert: Dovecot ist nur cluster-intern erreichbar, sein Zertifikat passt nicht zum Service-Namen
-: "${ZPUSH_IMAP_OPTIONS:=/tls-sslv23/novalidate-cert/norsh}"
+: "${ZPUSH_IMAP_OPTIONS:=/tls-sslv23${IMAP_CERT_OPT}/norsh}"
 : "${ZPUSH_SMTP_SERVER:=postfix-ox.opendesk.svc.cluster.local}"
 : "${ZPUSH_SMTP_PORT:=25}"
 : "${ZPUSH_DAV_PORT:=443}"
@@ -17,6 +27,12 @@ set -euo pipefail
 : "${ZPUSH_PING_MAX_LIFETIME:=900}"
 
 Z=/usr/share/z-push
+
+if [ -n "$ZPUSH_CA_FILE" ]; then
+  [ -r "$ZPUSH_CA_FILE" ] || { echo "ZPUSH_CA_FILE nicht lesbar: $ZPUSH_CA_FILE" >&2; exit 1; }
+  cp "$ZPUSH_CA_FILE" /usr/local/share/ca-certificates/zpush-extra-ca.crt
+  update-ca-certificates >/dev/null
+fi
 
 # define('NAME', ...) in einer Z-Push-Konfigdatei setzen und pruefen
 setdef() {
@@ -48,9 +64,9 @@ setdef $I IMAP_FOLDER_TRASH "'Trash'"
 setdef $I IMAP_FOLDER_SPAM "'Junk'"
 setdef $I IMAP_FOLDER_ARCHIVE "'Archive'"
 setdef $I IMAP_EXCLUDED_FOLDERS "'confirmed-ham|confirmed-spam'"
-# Versand mit den Zugangsdaten des Geraets (SASL + STARTTLS), Zertifikat cluster-intern nicht pruefen
-H="$ZPUSH_SMTP_SERVER" PT="$ZPUSH_SMTP_PORT" perl -pi -e 's/^\$imap_smtp_params = array\(.*\);/\$imap_smtp_params = array("host" => "$ENV{H}", "port" => $ENV{PT}, "auth" => true, "username" => "imap_username", "password" => "imap_password", "verify_peer" => false, "verify_peer_name" => false, "allow_self_signed" => true);/' $I
-grep -q "\"host\" => \"${ZPUSH_SMTP_SERVER}\"" $I || { echo "SMTP-Parameter nicht gesetzt" >&2; exit 1; }
+# Versand mit den Zugangsdaten des Geraets (SASL + STARTTLS); Zertifikatspruefung nach ZPUSH_TLS_VERIFY
+H="$ZPUSH_SMTP_SERVER" PT="$ZPUSH_SMTP_PORT" V="$SMTP_VERIFY" S="$SMTP_SELF_SIGNED" perl -pi -e 's/^\$imap_smtp_params = array\(.*\);/\$imap_smtp_params = array("host" => "$ENV{H}", "port" => $ENV{PT}, "auth" => true, "username" => "imap_username", "password" => "imap_password", "verify_peer" => $ENV{V}, "verify_peer_name" => $ENV{V}, "allow_self_signed" => $ENV{S});/' $I
+grep -q "\"host\" => \"${ZPUSH_SMTP_SERVER}\".*\"verify_peer\" => ${SMTP_VERIFY}," $I || { echo "SMTP-Parameter nicht gesetzt" >&2; exit 1; }
 
 K=$Z/backend/caldav/config.php
 setdef $K CALDAV_PROTOCOL "'https'"
