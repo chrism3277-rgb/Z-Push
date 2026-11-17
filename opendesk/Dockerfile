@@ -6,7 +6,7 @@ ARG AWL_VERSION=r0.65
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl apache2 libapache2-mod-php8.2 \
+      ca-certificates curl logrotate apache2 libapache2-mod-php8.2 \
       php8.2-imap php8.2-curl php8.2-mbstring php8.2-xml php8.2-intl php8.2-cli \
  && rm -rf /var/lib/apt/lists/*
 

@@ -89,16 +89,55 @@ Alles läuft über Umgebungsvariablen im Deployment. Die Standardwerte passen f�
 | `ZPUSH_DAV_PORT` | `443` | |
 | `ZPUSH_IMAP_SERVER` | `dovecot.opendesk.svc.cluster.local` | |
 | `ZPUSH_IMAP_PORT` | `143` | |
-| `ZPUSH_IMAP_OPTIONS` | `/tls-sslv23/novalidate-cert/norsh` | STARTTLS zu Dovecot (siehe Abschnitt 10) |
+| `ZPUSH_IMAP_OPTIONS` | `/tls-sslv23/novalidate-cert/norsh` | STARTTLS zu Dovecot (siehe Abschnitt 10). Wer den Wert selbst setzt, überschreibt damit auch `ZPUSH_TLS_VERIFY` für IMAP |
+| `ZPUSH_TLS_VERIFY` | `false` | `true` prüft die Zertifikate von Dovecot und postfix (siehe „Zertifikate prüfen“) |
+| `ZPUSH_CA_FILE` | leer | Pfad zu einer eigenen CA (PEM), die dem Truststore des Containers hinzugefügt wird |
 | `ZPUSH_SMTP_SERVER` | `postfix-ox.opendesk.svc.cluster.local` | Versand mit den Zugangsdaten des Geräts |
 | `ZPUSH_SMTP_PORT` | `25` | |
 | `ZPUSH_TIMEZONE` | `Europe/Berlin` | Serverzeitzone, auch Ersatz, wenn ein Gerät keine Zeitzone schickt |
-| `ZPUSH_LOGLEVEL` | `INFO` | `ERROR`, `WARN`, `INFO`, `DEBUG`, `WBXML` |
+| `ZPUSH_LOGLEVEL` | `INFO` | `ERROR`, `WARN`, `INFO`, `DEBUG`, `WBXML` (siehe „Logs und Datenschutz“ in Abschnitt 8) |
+| `ZPUSH_LOG_KEEP_DAYS` | `14` | Logs werden täglich rotiert und nach so vielen Tagen gelöscht |
 | `ZPUSH_SHARED_MAILBOX_LOGIN` | `true` | Funktionspostfach-Login `<login>@<adresse>` erlauben (nur Mail) |
 | `ZPUSH_PING_MAX_LIFETIME` | `900` | maximale Dauer einer Push-Verbindung in Sekunden |
 
 Feste Einstellungen, die das Startskript immer setzt: Login mit vollem Namen erlaubt, Standardkalender und
 Standardadressbuch werden automatisch erkannt (`AUTO`), IMAP-Ordner `Sent`, `Drafts`, `Trash`, `Junk`.
+
+### Zertifikate prüfen
+
+Die Verbindung zu OX (CalDAV/CardDAV) läuft über `dav.<DOMAIN>` und wird immer geprüft. Zu Dovecot und
+postfix spricht Z-Push verschlüsselt (STARTTLS), prüft das Zertifikat im Standard aber **nicht**: Beide
+zeigen das Zertifikat für `*.<DOMAIN>`, Z-Push erreicht sie jedoch über ihren Cluster-Namen
+(`dovecot.opendesk.svc.cluster.local`), und der steht nicht im Zertifikat. Die Daten bleiben dabei im
+Cluster-Netz. Wer die Prüfung trotzdem will (z. B. als Vorgabe im öffentlichen Sektor):
+
+1. Dovecot und postfix unter einem Namen ansprechen, der zum Zertifikat passt. Am einfachsten per
+   `hostAliases` auf die Cluster-IPs der beiden Services:
+   ```bash
+   kubectl -n opendesk get svc dovecot postfix-ox -o custom-columns=NAME:.metadata.name,IP:.spec.clusterIP
+   ```
+   ```yaml
+   hostAliases:
+   - ip: <Cluster-IP dovecot>
+     hostnames: [imap-intern.<DOMAIN>]
+   - ip: <Cluster-IP postfix-ox>
+     hostnames: [smtp-intern.<DOMAIN>]
+   env:
+   - {name: ZPUSH_IMAP_SERVER, value: imap-intern.<DOMAIN>}
+   - {name: ZPUSH_SMTP_SERVER, value: smtp-intern.<DOMAIN>}
+   - {name: ZPUSH_TLS_VERIFY, value: "true"}
+   ```
+   Die Namen müssen nicht im DNS stehen. Eine Cluster-IP ändert sich, wenn der Service gelöscht und neu
+   angelegt wird. Dann schlägt die Anmeldung fehl, bis die IP im Manifest nachgezogen ist.
+2. Stammt das Zertifikat von einer eigenen CA (kein Let's Encrypt o. ä.), die CA als Datei einhängen und
+   `ZPUSH_CA_FILE` auf den Pfad setzen, z. B. aus einem Secret oder einer ConfigMap mit dem CA-Zertifikat
+   von openDesk. Sie gilt dann auch für die Verbindung zu `dav.<DOMAIN>`.
+3. Vorab im laufenden Pod prüfen, ob Name und Kette passen:
+   ```bash
+   kubectl -n zpush exec deploy/zpush -- sh -c 'echo | openssl s_client -connect dovecot.opendesk.svc.cluster.local:143 \
+     -starttls imap -verify_hostname imap-intern.<DOMAIN> 2>/dev/null | grep Verif'
+   # erwartet: "Verification: OK"
+   ```
 
 ## 6. In Kubernetes installieren
 
@@ -156,6 +195,20 @@ Die Geräte merken vom Update nichts, ihr Sync-Status liegt auf dem Volume.
 Der Benutzer braucht in openDesk Rechte auf das Funktionspostfach. Gibt es auf dem Gerät schon ein Konto
 mit demselben Benutzernamen, lässt Android kein zweites zu: erst das alte Konto entfernen.
 
+**Zwei-Faktor-Anmeldung (Authenticator)**: Ein Konto, für das in Keycloak ein Authenticator (OTP)
+eingerichtet ist, kann ActiveSync **nicht** nutzen. Z-Push reicht nur Benutzer und Passwort weiter, Dovecot
+prüft sie per Passwort-Anmeldung („Direct Grant“) bei Keycloak, und Keycloak verlangt dort für solche Konten
+zusätzlich den Einmalcode. Den kann ein ActiveSync-Gerät nicht mitschicken. Das Gerät meldet „Anmeldung
+fehlgeschlagen“, als wäre das Passwort falsch. Ein angehängter Einmalcode hinter dem Passwort hilft nicht,
+App-Passwörter gibt es in openDesk nicht.
+
+- Richtet ein Benutzer den Authenticator ein, während sein Gerät schon verbunden ist, bricht die
+  Synchronisierung wenige Minuten später ab (so lange merkt sich Dovecot eine erfolgreiche Anmeldung).
+- Umgekehrt heißt das: ActiveSync-Zugänge sind nur durch das Passwort geschützt. Wer Z-Push anbietet,
+  sollte den Endpunkt nicht offen ins Internet stellen (z. B. nur per VPN) oder das bewusst entscheiden.
+- Geprüft mit openDesk 1.19.3 und einem Testkonto: mit Authenticator HTTP 401, nach Entfernen des
+  Authenticators wieder Anmeldung und Ordnerliste.
+
 **Absenderadresse**: Wenn intern andere Adressen gelten als extern (z. B. `@in.firma.de`), schreibt
 postfix-ox den Absender um. Damit das auch für Z-Push gilt, braucht postfix-ox
 
@@ -174,6 +227,32 @@ In openDesk geht das über `customization.release.postfixOx` → `postfix.overri
 kubectl -n zpush logs deploy/zpush -f            # Apache-Zugriffe + Z-Push-Log
 kubectl -n zpush exec deploy/zpush -- tail -f /var/lib/z-push/log/z-push-error.log
 ```
+
+### Logs und Datenschutz
+
+Die Logs enthalten **personenbezogene Daten**. Wer Z-Push betreibt, sollte das in sein
+Verarbeitungsverzeichnis und sein Löschkonzept aufnehmen.
+
+| Loglevel | Inhalt |
+|---|---|
+| `ERROR`, `WARN` | Fehler und Warnungen mit Loginname, bei abgelehnten Anmeldungen auch die IP-Adresse |
+| `INFO` (Standard) | zusätzlich jede Anfrage: Loginname, Geräte-ID und Gerätetyp, IP-Adresse, Zeitpunkt, Befehl, Ordnernamen. **Keine** Mail- oder Termininhalte |
+| `DEBUG` | zusätzlich technische Details zu einzelnen Elementen (Kennungen, Pfade, Serverantworten) |
+| `WBXML` | zusätzlich der **vollständige Inhalt** jeder Synchronisation: Mails, Termine, Aufgaben, Kontakte |
+
+- **Sparsam loggen:** Für den Dauerbetrieb genügt `ZPUSH_LOGLEVEL=WARN`. `INFO` ist der Standard, weil
+  die Fehlersuche in Abschnitt 10 darauf aufbaut (z. B. ob ein Gerät Push nutzt). `DEBUG` und `WBXML` nie
+  dauerhaft für alle einschalten.
+- **Detail-Log nur gezielt und befristet:** Das ausführliche Log für einen einzelnen Benutzer (nächster
+  Abschnitt) enthält dessen Mails und Termine im Klartext. Nur mit Wissen des Benutzers einschalten, nach
+  der Fehlersuche wieder ausschalten und die Datei sofort löschen.
+- **Aufbewahrung:** Die Logs unter `/var/lib/z-push/log` werden täglich rotiert und nach
+  `ZPUSH_LOG_KEEP_DAYS` Tagen (Standard 14) gelöscht, auch vergessene Detail-Logs.
+- **Container-Log:** Das Apache-Zugriffslog und eine Kopie des Z-Push-Logs gehen zusätzlich in die
+  Standardausgabe des Pods (`kubectl logs`). Dort stehen Loginname und Geräte-ID in der Adresse jeder
+  Anfrage. Sammelt ein zentrales Logsystem die Pod-Logs ein, gelten dessen Fristen und Zugriffsrechte.
+- **Zugriff:** Lesen kann die Logs, wer im Namespace `zpush` `exec` ausführen oder das Volume einhängen
+  darf. Diese Rechte entsprechend knapp halten.
 
 ### Geräte verwalten (z-push-admin)
 
@@ -195,10 +274,16 @@ kubectl -n zpush exec deploy/zpush -- sh -c "sed -i \
   \"s/define('LOGUSERLEVEL', LOGLEVEL_DEVICEID);/define('LOGUSERLEVEL', LOGLEVEL_WBXML);/; \
    s/^    \\\$specialLogUsers = array();/    \\\$specialLogUsers = array('<login>');/\" \
   /usr/share/z-push/config.php"
-# Log: /var/lib/z-push/log/<login>-<geraete-id>.log  (enthält Mail- und Termininhalte!)
+# Log: /var/lib/z-push/log/<login>-<geraete-id>.log
 ```
 
-Danach den Pod neu starten (`kubectl -n zpush rollout restart deploy/zpush`) und die Logdatei löschen.
+**Achtung:** Diese Datei enthält die Mails, Termine und Kontakte des Benutzers im Klartext (siehe „Logs und
+Datenschutz“). Nach der Fehlersuche den Pod neu starten und die Datei löschen:
+
+```bash
+kubectl -n zpush rollout restart deploy/zpush
+kubectl -n zpush exec deploy/zpush -- sh -c 'rm -v /var/lib/z-push/log/<login>-*.log*'
+```
 
 ## 9. Weiterentwickeln
 
@@ -249,12 +334,14 @@ sind openDesk-spezifisch.
 | Symptom | Ursache / Lösung |
 |---|---|
 | Gerät: „Anmeldung fehlgeschlagen“ | Benutzer/Passwort falsch, oder beim Funktionspostfach fehlen die Rechte. `z-push-error.log` zeigt `failed to authenticate user` |
+| „Anmeldung fehlgeschlagen“, obwohl das Passwort stimmt | Für das Konto ist ein Authenticator (2FA) eingerichtet (Abschnitt 7). Im Z-Push-Log sieht das aus wie ein falsches Passwort, im Keycloak-Log steht `LOGIN_ERROR` mit `clientId="opendesk-dovecot-grant"` und `error="invalid_user_credentials"` |
 | Gerät: „Fehler. Versuchen Sie es später erneut“, im Log aber Provision/FolderSync erfolgreich | Auf dem Gerät gibt es schon ein Konto mit demselben Benutzernamen. Altes Konto entfernen |
 | Termine vom Gerät kommen nicht in OX an | Log nach `server refused` durchsuchen, dort steht der Grund (z. B. keine Schreibrechte). Danach ausführliches Log (Abschnitt 8) |
 | Termine aus OX kommen erst nach Minuten | Gerät nutzt kein Push. Im Log stehen dann keine `cmd='Ping'`. Auf dem Gerät „Synchronisierung: Push/Automatisch“ einstellen |
 | Push bricht ständig ab | Ingress-Timeouts zu kurz (Abschnitt 6) |
 | Absender ist die interne `@in.`-Adresse | postfix-ox ohne `local_header_rewrite_clients` bzw. ohne Eintrag in `sender_canonical.map` (Abschnitt 7) |
 | `SSL negotiation failed` zu Dovecot | `ZPUSH_IMAP_OPTIONS` mit `/tls` statt `/tls-sslv23`. c-client spricht mit `/tls` nur TLS 1.0 |
+| Mit `ZPUSH_TLS_VERIFY=true` scheitert jede Anmeldung, im Log `Certificate failure` | Servername passt nicht zum Zertifikat oder die CA ist unbekannt (Abschnitt 5, „Zertifikate prüfen“) |
 | Pod startet, Ingress liefert 503 | Pod noch nicht bereit (`kubectl -n zpush get pods`) oder Service im Namespace `opendesk` fehlt |
 | Uhrzeiten von Serien nach der Zeitumstellung verschoben | Gerät hat den Termin vor dem Zeitzonen-Fix bekommen. Serie in OX neu anlegen oder Gerät per `resync` neu synchronisieren |
 
