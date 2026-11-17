@@ -25,6 +25,9 @@ esac
 : "${ZPUSH_DAV_PORT:=443}"
 : "${ZPUSH_SHARED_MAILBOX_LOGIN:=true}"
 : "${ZPUSH_PING_MAX_LIFETIME:=900}"
+# Logs taeglich rotieren und nach so vielen Tagen loeschen (auch die Detail-Logs einzelner Benutzer)
+: "${ZPUSH_LOG_KEEP_DAYS:=14}"
+case "$ZPUSH_LOG_KEEP_DAYS" in ''|*[!0-9]*) echo "ZPUSH_LOG_KEEP_DAYS muss eine Zahl sein" >&2; exit 1 ;; esac
 
 Z=/usr/share/z-push
 
@@ -86,6 +89,26 @@ setdef $A CARDDAV_CONTACTS_FOLDER_NAME "'Kontakte'"
 mkdir -p /var/lib/z-push/state /var/lib/z-push/log
 touch /var/lib/z-push/log/z-push.log /var/lib/z-push/log/z-push-error.log
 chown -R www-data:www-data /var/lib/z-push
+
+# Logrotation ohne cron: einmal beim Start und danach taeglich. Z-Push oeffnet die Logdatei bei jedem
+# Eintrag neu, deshalb genuegt Umbenennen (kein Signal noetig); "tail -F" folgt dem Dateinamen.
+cat > /etc/logrotate-zpush.conf <<EOF
+/var/lib/z-push/log/*.log {
+  su www-data www-data
+  daily
+  rotate ${ZPUSH_LOG_KEEP_DAYS}
+  maxage ${ZPUSH_LOG_KEEP_DAYS}
+  missingok
+  notifempty
+  compress
+  delaycompress
+  create 0640 www-data www-data
+}
+EOF
+( while :; do
+    logrotate -s /var/lib/z-push/logrotate.status /etc/logrotate-zpush.conf || echo "logrotate fehlgeschlagen" >&2
+    sleep 86400
+  done ) &
 
 tail -n0 -F /var/lib/z-push/log/z-push.log /var/lib/z-push/log/z-push-error.log &
 exec apache2ctl -D FOREGROUND
