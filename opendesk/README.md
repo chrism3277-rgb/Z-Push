@@ -40,6 +40,9 @@ Konfiguration über Umgebungsvariablen (siehe `entrypoint.sh`):
 | `ZPUSH_TIMEZONE` | `Europe/Berlin` |
 | `ZPUSH_LOGLEVEL` | `INFO` |
 | `ZPUSH_IMAP_OPTIONS` | `/tls-sslv23/novalidate-cert/norsh` (STARTTLS zu Dovecot) |
+| `ZPUSH_TLS_VERIFY` | `false` (`true` prüft die Zertifikate von Dovecot und postfix) |
+| `ZPUSH_CA_FILE` | leer (eigene CA als PEM-Datei) |
+| `ZPUSH_LOG_KEEP_DAYS` | `14` |
 | `ZPUSH_SHARED_MAILBOX_LOGIN` | `true` |
 
 Kubernetes-Beispiel: `opendesk/k8s/zpush.yaml`. Der Pod löst `dav.<DOMAIN>` per `hostAliases` direkt auf den Ingress auf.
@@ -52,6 +55,9 @@ Kubernetes-Beispiel: `opendesk/k8s/zpush.yaml`. Der Pod löst `dav.<DOMAIN>` per
   (`server refused ... with HTTP ...`). Das ist gewollt: Vorher ging der Termin ohne Meldung verloren.
 - **Funktionspostfächer:** Jedes Funktionspostfach braucht auf dem Gerät ein eigenes Konto
   (Benutzer `<login>@<funktionsadresse>`). Kalender und Kontakte gibt es dort nicht.
+- **Zwei-Faktor-Anmeldung:** Konten mit eingerichtetem Authenticator (OTP in Keycloak) können sich nicht
+  per ActiveSync anmelden, weil das Gerät nur Benutzer und Passwort schickt. Details in der
+  [Anleitung](ANLEITUNG.md), Abschnitt 7.
 - **Globales Adressbuch (GAL):** Nicht angebunden. Die Empfängersuche auf dem Gerät findet nur eigene Kontakte.
 - **Tests:** Z-Push hat keine Unit-Tests (nur Psalm). Die Fixes wurden gegen OX App Suite und Android Mail
   geprüft. Die Testfälle stehen reproduzierbar in [TESTFAELLE.md](TESTFAELLE.md).
